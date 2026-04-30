@@ -15,7 +15,11 @@
 
 # next.js
 /.next/
+/.next-verify/
 /out/
+
+# VS Code
+/.vscode/
 
 # production
 /build
