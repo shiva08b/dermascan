@@ -119,10 +119,12 @@ function normalizeRemedies(result: ScanResult, fallback: HomeRemedy[]) {
 export default function ResultsPage() {
   const router = useRouter()
   const [payload, setPayload] = useState<StoredResultPayload | null>(null)
+  const [payloadLoaded, setPayloadLoaded] = useState(false)
 
   useEffect(() => {
     const stored = sessionStorage.getItem('scanResult')
     setPayload(stored ? (JSON.parse(stored) as StoredResultPayload) : null)
+    setPayloadLoaded(true)
   }, [])
 
   const preferences = useMemo(() => {
@@ -131,10 +133,28 @@ export default function ResultsPage() {
   }, [payload])
 
   useEffect(() => {
-    if (!payload) {
+    if (payloadLoaded && !payload) {
       router.replace('/scan')
     }
-  }, [payload, router])
+  }, [payloadLoaded, payload, router])
+
+  if (!payloadLoaded) {
+    return (
+      <div className="page-shell auth-shell">
+        <div className="dashboard-layout">
+          <main className="dashboard-main">
+            <header className="page-header">
+              <div>
+                <div className="eyebrow">Latest analysis</div>
+                <h1 className="display-title page-title">Result</h1>
+              </div>
+            </header>
+            <p>Loading result...</p>
+          </main>
+        </div>
+      </div>
+    )
+  }
 
   if (!payload || !preferences) {
     return (

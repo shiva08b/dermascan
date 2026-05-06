@@ -8,28 +8,34 @@ import { AppShell } from '@/components/app-shell'
 import { usePatientData } from '@/components/use-patient-data'
 import { analyzeSkin } from '@/lib/api'
 import { insertScan, prepareImageForStorage, saveAsset, uploadScanImage } from '@/lib/app-data'
-import type { AIProvider, ScanRecord } from '@/lib/types'
+import type { AIProvider, ScanRecord, VisionModel } from '@/lib/types'
 
 const PROVIDERS: { value: AIProvider; label: string }[] = [
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'groq', label: 'Groq' },
-  { value: 'cohere', label: 'Cohere' },
+  { value: 'gemini',      label: 'Gemini' },
+  { value: 'groq',        label: 'Groq' },
+  { value: 'cohere',      label: 'Cohere' },
   { value: 'huggingface', label: 'HuggingFace' },
-  { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'combined', label: 'Combined' },
-  { value: 'consensus', label: 'Consensus' },
+  { value: 'openrouter',  label: 'OpenRouter' },
+  { value: 'combined',    label: 'Combined' },
+  { value: 'consensus',   label: 'Consensus' },
+]
+
+const VISION_MODELS: { value: VisionModel; label: string; badge?: string }[] = [
+  { value: 'efficientnet', label: 'EfficientNet (Recommended)' },
+  { value: 'vit',          label: 'Vision Transformer (Experimental)', badge: 'ViT' },
 ]
 
 export default function ScanPage() {
   const { user, loading, preferences, allowance, subscription } = usePatientData()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [provider, setProvider] = useState<AIProvider>('groq')
-  const [file, setFile] = useState<File | null>(null)
-  const [preview, setPreview] = useState<string>('')
-  const [dragging, setDragging] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [provider, setProvider]         = useState<AIProvider>('groq')
+  const [visionModel, setVisionModel]   = useState<VisionModel>('efficientnet')
+  const [file, setFile]                 = useState<File | null>(null)
+  const [preview, setPreview]           = useState<string>('')
+  const [dragging, setDragging]         = useState(false)
+  const [busy, setBusy]                 = useState(false)
+  const [error, setError]               = useState('')
 
   function onPick(nextFile: File) {
     setFile(nextFile)
@@ -49,7 +55,7 @@ export default function ScanPage() {
 
     try {
       const [result, storageUrl, imageDataUrl] = await Promise.all([
-        analyzeSkin(file, provider, preferences.skinType),
+        analyzeSkin(file, provider, preferences.skinType, visionModel),
         uploadScanImage(user.id, file),
         prepareImageForStorage(file),
       ])
@@ -128,16 +134,29 @@ export default function ScanPage() {
 
           <div className="two-col">
             <label className="field-stack">
+              <span className="field-label">Vision model</span>
+              <select
+                className="text-select"
+                value={visionModel}
+                onChange={(event) => setVisionModel(event.target.value as VisionModel)}
+              >
+                {VISION_MODELS.map((entry) => (
+                  <option key={entry.value} value={entry.value}>{entry.label}</option>
+                ))}
+              </select>
+              {visionModel === 'vit' && (
+                <span style={{ fontSize: '0.72rem', color: 'var(--accent)', marginTop: '0.3rem' }}>
+                  ⚗️ Experimental — binary acne detection only
+                </span>
+              )}
+            </label>
+            <label className="field-stack">
               <span className="field-label">AI provider</span>
               <select className="text-select" value={provider} onChange={(event) => setProvider(event.target.value as AIProvider)}>
                 {PROVIDERS.map((entry) => (
                   <option key={entry.value} value={entry.value}>{entry.label}</option>
                 ))}
               </select>
-            </label>
-            <label className="field-stack">
-              <span className="field-label">Preferred routine language</span>
-              <input className="text-input" value={preferences.language} readOnly />
             </label>
           </div>
 

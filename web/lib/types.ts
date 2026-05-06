@@ -9,6 +9,8 @@ export type AIProvider =
   | 'combined'
   | 'consensus'
 
+export type VisionModel = 'efficientnet' | 'vit'
+
 export type SkinType = 'oily' | 'dry' | 'sensitive' | 'combination'
 
 export interface ScanResult {
@@ -17,9 +19,12 @@ export interface ScanResult {
   confidence: number
   severity: Severity
   recommendation_tags: string[]
+  vision_model?: VisionModel
+  vit_top_predictions?: { label: string; confidence: number }[]
   raw_scores: {
-    screener: number[]
+    screener?: number[]
     classifier?: number[]
+    vit_top5?: number[]
   }
   skincare_routine: {
     provider: string
