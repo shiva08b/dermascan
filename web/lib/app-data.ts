@@ -55,6 +55,10 @@ function keyFor(userId: string, suffix: string) {
   return `dermascan.${suffix}.${userId}`
 }
 
+function localScansKey(userId: string) {
+  return keyFor(userId, 'localScans')
+}
+
 function safeParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback
 
@@ -178,9 +182,21 @@ export function getScanAllowance(scans: ScanRecord[], preferences: AppPreference
 }
 
 export async function fetchUserScans(userId: string) {
-  const { data, error } = await supabase.from('scans').select('*').eq('user_id', userId).order('created_at', { ascending: false })
-  if (error) throw error
-  return (data ?? []) as ScanRecord[]
+  try {
+    const { data, error } = await supabase.from('scans').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+    if (error) throw error
+    return (data ?? []) as ScanRecord[]
+  } catch {
+    if (typeof window === 'undefined') return []
+    const localRows = safeParse<ScanRecord[]>(localStorage.getItem(localScansKey(userId)), [])
+    return localRows.sort((a, b) => Number(new Date(b.created_at)) - Number(new Date(a.created_at)))
+  }
+}
+
+function saveLocalScan(userId: string, scan: ScanRecord) {
+  if (typeof window === 'undefined') return
+  const current = safeParse<ScanRecord[]>(localStorage.getItem(localScansKey(userId)), [])
+  localStorage.setItem(localScansKey(userId), JSON.stringify([scan, ...current]))
 }
 
 /**
@@ -276,28 +292,50 @@ export async function insertScan(userId: string, result: ScanResult, imageUrl?: 
     image_url: imageUrl ?? null,
   }
 
-  const { data, error } = await supabase
-    .from('scans')
-    .insert(payload)
-    .select('*')
-    .single()
+  try {
+    const { data, error } = await supabase
+      .from('scans')
+      .insert(payload)
+      .select('*')
+      .single()
 
-  if (error) {
-    if (imageUrl) {
-      const retry = await supabase
-        .from('scans')
-        .insert({ ...payload, image_url: null })
-        .select('*')
-        .single()
+    if (error) {
+      if (imageUrl) {
+        const retry = await supabase
+          .from('scans')
+          .insert({ ...payload, image_url: null })
+          .select('*')
+          .single()
 
-      if (retry.error) throw retry.error
-      return retry.data as ScanRecord
+        if (retry.error) throw retry.error
+        return retry.data as ScanRecord
+      }
+
+      throw error
     }
 
-    throw error
-  }
+    return data as ScanRecord
+  } catch {
+    const localRecord: ScanRecord = {
+      id: `local-${crypto.randomUUID()}`,
+      user_id: userId,
+      created_at: new Date().toISOString(),
+      is_acne: result.is_acne,
+      acne_type: result.acne_type,
+      confidence: result.confidence,
+      severity: result.severity,
+      provider: result.skincare_routine?.provider ?? 'local',
+      routine: result.skincare_routine?.routine ?? '',
+      image_url: imageUrl ?? null,
+      raw_scores: {
+        screener: result.raw_scores?.screener ?? [],
+        classifier: result.raw_scores?.classifier,
+      },
+    }
 
-  return data as ScanRecord
+    saveLocalScan(userId, localRecord)
+    return localRecord
+  }
 }
 
 /**

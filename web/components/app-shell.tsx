@@ -18,6 +18,7 @@ import {
   Stethoscope,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { canUseDevAuthFallback, clearDevSessionUser, getDevSessionUser } from '@/lib/dev-auth'
 import { supabase } from '@/lib/supabase'
 import { MedicalDisclaimer } from '@/components/medical-disclaimer'
 
@@ -49,13 +50,42 @@ export function AppShell({ eyebrow, title, action, children }: AppShellProps) {
   useEffect(() => {
     let mounted = true
 
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return
-      setEmail(data.user?.email ?? 'guest@dermascan.ai')
-    })
+    supabase.auth.getUser()
+      .then(({ data }) => {
+        if (!mounted) return
+        if (data.user?.email) {
+          setEmail(data.user.email)
+          return
+        }
+
+        if (canUseDevAuthFallback()) {
+          setEmail(getDevSessionUser()?.email ?? 'guest@dermascan.ai')
+          return
+        }
+
+        setEmail('guest@dermascan.ai')
+      })
+      .catch(() => {
+        if (!mounted) return
+        if (canUseDevAuthFallback()) {
+          setEmail(getDevSessionUser()?.email ?? 'guest@dermascan.ai')
+          return
+        }
+        setEmail('guest@dermascan.ai')
+      })
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setEmail(session?.user?.email ?? 'guest@dermascan.ai')
+      if (session?.user?.email) {
+        setEmail(session.user.email)
+        return
+      }
+
+      if (canUseDevAuthFallback()) {
+        setEmail(getDevSessionUser()?.email ?? 'guest@dermascan.ai')
+        return
+      }
+
+      setEmail('guest@dermascan.ai')
     })
 
     return () => {
@@ -65,7 +95,8 @@ export function AppShell({ eyebrow, title, action, children }: AppShellProps) {
   }, [])
 
   async function handleLogout() {
-    await supabase.auth.signOut()
+    clearDevSessionUser()
+    await supabase.auth.signOut().catch(() => null)
     router.push('/auth/login')
   }
 

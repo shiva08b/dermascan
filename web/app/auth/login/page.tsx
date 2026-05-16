@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { canUseDevAuthFallback, getDevSessionUser, isFetchFailure, setDevSessionUser } from '@/lib/dev-auth'
 import { supabase } from '@/lib/supabase'
 
 export default function LoginPage() {
@@ -13,9 +14,22 @@ export default function LoginPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) router.replace('/dashboard')
-    })
+    supabase.auth.getUser()
+      .then(({ data }) => {
+        if (data.user) {
+          router.replace('/dashboard')
+          return
+        }
+
+        if (canUseDevAuthFallback() && getDevSessionUser()) {
+          router.replace('/dashboard')
+        }
+      })
+      .catch(() => {
+        if (canUseDevAuthFallback() && getDevSessionUser()) {
+          router.replace('/dashboard')
+        }
+      })
   }, [router])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -23,15 +37,26 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
+    try {
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
 
-    if (authError) {
-      setError(authError.message)
+      if (authError) {
+        setError(authError.message)
+        setLoading(false)
+        return
+      }
+
+      router.push('/dashboard')
+    } catch (error) {
+      if (canUseDevAuthFallback() && isFetchFailure(error)) {
+        setDevSessionUser(email)
+        router.push('/dashboard')
+        return
+      }
+
+      setError(error instanceof Error ? error.message : 'Sign in failed')
       setLoading(false)
-      return
     }
-
-    router.push('/dashboard')
   }
 
   return (
@@ -43,6 +68,11 @@ export default function LoginPage() {
         </h1>
 
         <form onSubmit={handleSubmit} className="stack">
+          {canUseDevAuthFallback() ? (
+            <div className="banner info">
+              Supabase is unreachable on this machine. Localhost will use a temporary dev sign-in fallback so you can still test scans and results.
+            </div>
+          ) : null}
           <label className="field-stack">
             <span className="field-label">Email</span>
             <input className="text-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />

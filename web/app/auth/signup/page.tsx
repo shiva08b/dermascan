@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { canUseDevAuthFallback, isFetchFailure, setDevSessionUser } from '@/lib/dev-auth'
 import { supabase } from '@/lib/supabase'
 
 export default function SignupPage() {
@@ -18,16 +19,27 @@ export default function SignupPage() {
     setLoading(true)
     setError('')
 
-    const { error: authError } = await supabase.auth.signUp({ email, password })
+    try {
+      const { error: authError } = await supabase.auth.signUp({ email, password })
 
-    if (authError) {
-      setError(authError.message)
+      if (authError) {
+        setError(authError.message)
+        setLoading(false)
+        return
+      }
+
+      setSuccess(true)
       setLoading(false)
-      return
-    }
+    } catch (error) {
+      if (canUseDevAuthFallback() && isFetchFailure(error)) {
+        setDevSessionUser(email)
+        router.push('/dashboard')
+        return
+      }
 
-    setSuccess(true)
-    setLoading(false)
+      setError(error instanceof Error ? error.message : 'Sign up failed')
+      setLoading(false)
+    }
   }
 
   return (
@@ -48,6 +60,11 @@ export default function SignupPage() {
         ) : (
           <>
             <form onSubmit={handleSubmit} className="stack">
+              {canUseDevAuthFallback() ? (
+                <div className="banner info">
+                  Supabase is unreachable on this machine. Localhost will use a temporary dev account fallback so you can still test the app.
+                </div>
+              ) : null}
               <label className="field-stack">
                 <span className="field-label">Email</span>
                 <input className="text-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />

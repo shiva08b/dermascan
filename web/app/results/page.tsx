@@ -2,15 +2,16 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from 'next/link'
-import { AlertTriangle, ArrowRight, Bot, Calendar, Microscope } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Bot, Calendar, Microscope, RefreshCw } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { AppShell } from '@/components/app-shell'
 import { ProductCards } from '@/components/product-cards'
 import { RemedyCards } from '@/components/remedy-cards'
 import { loadPreferences } from '@/lib/app-data'
+import { fetchAiProducts, fetchAiRemedies } from '@/lib/api'
 import { getHomeRemedies, getRecommendedProducts } from '@/lib/experience'
-import { ACNE_LABELS, SEVERITY_COLORS, type ProductRecommendation, type HomeRemedy, type ScanRecord, type ScanResult } from '@/lib/types'
+import { ACNE_LABELS, SEVERITY_COLORS, type AIProvider, type ProductRecommendation, type HomeRemedy, type ScanRecord, type ScanResult } from '@/lib/types'
 
 interface StoredResultPayload {
   result: ScanResult
@@ -52,15 +53,39 @@ function parseRoutine(routine: string) {
   const sections: RoutineSection[] = []
   let current: RoutineSection | null = null
 
+  const isJunkLine = (value: string) => {
+    const normalized = value
+      .replace(/^['"]+|['"]+$/g, '')
+      .trim()
+      .toLowerCase()
+
+    if (!normalized) return true
+    if (['choices', 'choice', 'options', 'option', 'response', 'output', 'result'].includes(normalized)) {
+      return true
+    }
+    if (['[', ']', '{', '}', '```', 'json'].includes(normalized)) {
+      return true
+    }
+    return false
+  }
+
   for (const line of lines) {
     const isHeading = /^#+/.test(line) || /^\d+\./.test(line)
     if (isHeading) {
-      current = { title: normalizeHeading(line), items: [] }
+      const title = normalizeHeading(line)
+      if (isJunkLine(title)) {
+        continue
+      }
+      current = { title, items: [] }
       sections.push(current)
       continue
     }
 
     const cleanLine = line.replace(/^[-*]\s*/, '').trim()
+    if (isJunkLine(cleanLine)) {
+      continue
+    }
+
     if (!current) {
       current = { title: 'Overview', items: [] }
       sections.push(current)
@@ -68,7 +93,12 @@ function parseRoutine(routine: string) {
     current.items.push(cleanLine)
   }
 
-  return sections.length ? sections : [{ title: 'Routine', items: [routine] }]
+  const meaningfulSections = sections.filter((section) => section.items.length > 0)
+  if (meaningfulSections.length) {
+    return meaningfulSections
+  }
+
+  return [{ title: 'Routine', items: [routine] }]
 }
 
 function buildInsights(result: ScanResult) {
@@ -120,6 +150,9 @@ export default function ResultsPage() {
   const router = useRouter()
   const [payload, setPayload] = useState<StoredResultPayload | null>(null)
   const [payloadLoaded, setPayloadLoaded] = useState(false)
+  const [liveProducts, setLiveProducts] = useState<ReturnType<typeof getRecommendedProducts> | null>(null)
+  const [liveRemedies, setLiveRemedies] = useState<HomeRemedy[] | null>(null)
+  const [liveLoading, setLiveLoading] = useState(false)
 
   useEffect(() => {
     const stored = sessionStorage.getItem('scanResult')
@@ -137,6 +170,45 @@ export default function ResultsPage() {
       router.replace('/scan')
     }
   }, [payloadLoaded, payload, router])
+
+  useEffect(() => {
+    if (!payload || !preferences) return
+
+    let cancelled = false
+    const currentPayload = payload
+    const currentPreferences = preferences
+    const provider = ((currentPayload.result.skincare_routine?.provider ?? 'gemini').replace('_fallback', '')) as AIProvider
+
+    async function loadLiveRecommendations() {
+      setLiveLoading(true)
+      const [productsResponse, remediesResponse] = await Promise.all([
+        fetchAiProducts(
+          currentPayload.result.acne_type,
+          currentPayload.result.severity,
+          currentPreferences.skinType,
+          currentPayload.result.recommendation_tags ?? [],
+          provider,
+        ),
+        fetchAiRemedies(
+          currentPayload.result.acne_type,
+          currentPreferences.skinType,
+          provider,
+        ),
+      ])
+
+      if (cancelled) return
+
+      setLiveProducts(productsResponse.all.length ? productsResponse : null)
+      setLiveRemedies(remediesResponse.length ? remediesResponse : null)
+      setLiveLoading(false)
+    }
+
+    loadLiveRecommendations()
+
+    return () => {
+      cancelled = true
+    }
+  }, [payload, preferences])
 
   if (!payloadLoaded) {
     return (
@@ -177,11 +249,12 @@ export default function ResultsPage() {
   const { result, imageUrl, scan } = payload
   const acneLabel = ACNE_LABELS[result.acne_type ?? 'null']
   const severityColor = SEVERITY_COLORS[result.severity ?? 'null']
-  const routineSections = parseRoutine(result.skincare_routine.routine)
+  const routineSections = parseRoutine(result.skincare_routine?.routine || 'No routine available')
   const insightLines = buildInsights(result)
   const fallbackProducts = getRecommendedProducts(scan, preferences.skinType, preferences.ingredientBlacklist)
-  const products = normalizeProducts(result, fallbackProducts)
-  const remedies = normalizeRemedies(result, getHomeRemedies(scan, preferences.skinType))
+  const payloadProducts = normalizeProducts(result, fallbackProducts)
+  const products = liveProducts ?? payloadProducts
+  const remedies = liveRemedies ?? normalizeRemedies(result, getHomeRemedies(scan, preferences.skinType))
   const heroProducts: ProductRecommendation[] = products.all.slice(0, 4)
 
   return (
@@ -190,7 +263,7 @@ export default function ResultsPage() {
         <article className="card card-section analysis-panel">
           <div className="analysis-kicker">
             <span className="section-label" style={{ marginBottom: 0 }}>AI analysis</span>
-            <span className="mini-badge accent"><Bot size={12} /> {result.skincare_routine.provider}</span>
+            <span className="mini-badge accent"><Bot size={12} /> {result.skincare_routine?.provider || 'Unknown'}</span>
           </div>
 
           <div className="analysis-headline-row">
@@ -238,7 +311,7 @@ export default function ResultsPage() {
           </div>
 
           <div className="pill-row" style={{ marginTop: '1.2rem' }}>
-            {result.recommendation_tags.map((tag, index) => (
+            {result.recommendation_tags?.map((tag, index) => (
               <span key={`${tag}-${index}`} className="pill">
                 {tag.replace(/_/g, ' ')}
               </span>
@@ -288,9 +361,20 @@ export default function ResultsPage() {
             <div className="section-label">Recommended products</div>
             <h2 className="section-title">Suggested next-step skincare</h2>
           </div>
-          <Link href="/products" className="button-secondary">
-            Full catalog <ArrowRight size={15} />
-          </Link>
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {liveLoading ? (
+              <span className="mini-badge accent" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading live API
+              </span>
+            ) : liveProducts ? (
+              <span className="mini-badge accent">Live API</span>
+            ) : (
+              <span className="mini-badge">Fallback catalog</span>
+            )}
+            <Link href="/products" className="button-secondary">
+              Full catalog <ArrowRight size={15} />
+            </Link>
+          </div>
         </div>
 
         <div className="results-subgrid">
@@ -320,9 +404,20 @@ export default function ResultsPage() {
             <div className="section-label">Home remedies</div>
             <h2 className="section-title">Supportive at-home care</h2>
           </div>
-          <Link href="/remedies" className="button-secondary">
-            Open remedies <ArrowRight size={15} />
-          </Link>
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            {liveLoading ? (
+              <span className="mini-badge accent" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading live API
+              </span>
+            ) : liveRemedies ? (
+              <span className="mini-badge accent">Live API</span>
+            ) : (
+              <span className="mini-badge">Fallback remedies</span>
+            )}
+            <Link href="/remedies" className="button-secondary">
+              Open remedies <ArrowRight size={15} />
+            </Link>
+          </div>
         </div>
 
         {!result.is_acne ? (
